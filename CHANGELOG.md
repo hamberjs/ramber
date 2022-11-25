@@ -1,5 +1,9 @@
 # ramber changelog
 
+## 0.26.1
+
+* Handle skipped segments
+
 ## 0.26.0
 
 * Update to Hamber 3

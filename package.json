@@ -1,6 +1,6 @@
 {
   "name": "ramber",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "description": "Military-grade apps, engineered by Hamber",
   "bin": {
     "ramber": "./ramber"
