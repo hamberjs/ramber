@@ -145,7 +145,7 @@ export function get_page_handler(
 					path: req.path,
 					query: req.query,
 					params: {}
-				})
+				}, session)
 				: {};
 
 			match = error ? null : page.pattern.exec(req.path);
@@ -177,7 +177,7 @@ export function get_page_handler(
 
 		try {
 			if (redirect) {
-				const location = URL.resolve(req.baseUrl || '/', redirect.location);
+				const location = URL.resolve((req.baseUrl || '') + '/', redirect.location);
 
 				res.statusCode = redirect.statusCode;
 				res.setHeader('Location', location);
@@ -204,10 +204,22 @@ export function get_page_handler(
 			});
 
 			const props = {
+				stores: {
+					page: {
+						subscribe: writable({
+							path: req.path,
+							query: req.query,
+							params
+						}).subscribe
+					},
+					preloading: {
+						subscribe: writable(null).subscribe
+					},
+					session: writable(session)
+				},
 				segments: layout_segments,
 				status: error ? status : 200,
 				error: error ? error instanceof Error ? error : { message: error } : null,
-				session: writable(session),
 				level0: {
 					props: preloaded[0]
 				},
@@ -225,17 +237,11 @@ export function get_page_handler(
 
 					props[`level${l++}`] = {
 						component: part.component,
-						props: preloaded[i + 1],
+						props: preloaded[i + 1] || {},
 						segment: segments[i]
 					};
 				}
 			}
-
-			stores.page.set({
-				path: req.path,
-				query: req.query,
-				params: params
-			});
 
 			const { html, head, css } = App.render(props);
 
@@ -243,11 +249,12 @@ export function get_page_handler(
 				preloaded: `[${preloaded.map(data => try_serialize(data)).join(',')}]`,
 				session: session && try_serialize(session, err => {
 					throw new Error(`Failed to serialize session data: ${err.message}`);
-				})
+				}),
+				error: error && try_serialize(props.error)
 			};
 
 			let script = `__RAMBER__={${[
-				error && `error:1`,
+				error && `error:${serialized.error},status:${status}`,
 				`baseUrl:"${req.baseUrl}"`,
 				serialized.preloaded && `preloaded:${serialized.preloaded}`,
 				serialized.session && `session:${serialized.session}`
@@ -329,12 +336,10 @@ export function get_page_handler(
 			return;
 		}
 
-		if (!server_routes.some(route => route.pattern.test(req.path))) {
-			for (const page of pages) {
-				if (page.pattern.test(req.path)) {
-					handle_page(page, req, res);
-					return;
-				}
+		for (const page of pages) {
+			if (page.pattern.test(req.path)) {
+				handle_page(page, req, res);
+				return;
 			}
 		}
 

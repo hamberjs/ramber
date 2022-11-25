@@ -1,7 +1,6 @@
 import { writable } from 'hamber/store.mjs';
 import App from '@ramber/internal/App.hamber';
-import { stores } from '@ramber/internal/shared';
-import { Root, root_preload, ErrorComponent, ignore, components, routes } from '@ramber/internal/manifest-client';
+import { root_preload, ErrorComponent, ignore, components, routes } from '@ramber/internal/manifest-client';
 import {
 	Target,
 	ScrollPosition,
@@ -10,6 +9,7 @@ import {
 	ComponentLoader,
 	ComponentConstructor,
 	Route,
+	Query,
 	Page
 } from './types';
 import goto from './goto';
@@ -23,12 +23,16 @@ let current_token: {};
 let root_preloaded: Promise<any>;
 let current_branch = [];
 
-const session = writable(initial_data && initial_data.session);
+const stores = {
+	page: writable({}),
+	preloading: writable(null),
+	session: writable(initial_data && initial_data.session)
+};
 
 let $session;
 let session_dirty: boolean;
 
-session.subscribe(async value => {
+stores.session.subscribe(async value => {
 	$session = value;
 
 	if (!ready) return;
@@ -80,6 +84,19 @@ export { _history as history };
 
 export const scroll_history: Record<string, ScrollPosition> = {};
 
+export function extract_query(search: string) {
+	const query = Object.create(null);
+	if (search.length > 0) {
+		search.slice(1).split('&').forEach(searchParam => {
+			let [, key, value = ''] = /([^=]*)(?:=(.*))?/.exec(decodeURIComponent(searchParam.replace(/\+/g, ' ')));
+			if (typeof query[key] === 'string') query[key] = [<string>query[key]];
+			if (typeof query[key] === 'object') (query[key] as string[]).push(value);
+			else query[key] = value;
+		});
+	}
+	return query;
+}
+
 export function select_target(url: URL): Target {
 	if (url.origin !== location.origin) return null;
 	if (!url.pathname.startsWith(initial_data.baseUrl)) return null;
@@ -93,18 +110,9 @@ export function select_target(url: URL): Target {
 		const route = routes[i];
 
 		const match = route.pattern.exec(path);
-		if (match) {
-			const query: Record<string, string | string[]> = Object.create(null);
-			if (url.search.length > 0) {
-				url.search.slice(1).split('&').forEach(searchParam => {
-					let [, key, value] = /([^=]*)(?:=(.*))?/.exec(decodeURIComponent(searchParam));
-					value = (value || '').replace(/\+/g, ' ');
-					if (typeof query[key] === 'string') query[key] = [<string>query[key]];
-					if (typeof query[key] === 'object') (query[key] as string[]).push(value);
-					else query[key] = value;
-				});
-			}
 
+		if (match) {
+			const query: Query = extract_query(url.search);
 			const part = route.parts[route.parts.length - 1];
 			const params = part.params ? part.params(match) : {};
 
@@ -113,6 +121,35 @@ export function select_target(url: URL): Target {
 			return { href: url.href, route, match, page };
 		}
 	}
+}
+
+export function handle_error(url: URL) {
+	const { pathname, search } = location;
+	const { session, preloaded, status, error } = initial_data;
+
+	if (!root_preloaded) {
+		root_preloaded = preloaded && preloaded[0]
+	}
+
+	const props = {
+		error,
+		status,
+		session,
+		level0: {
+			props: root_preloaded
+		},
+		level1: {
+			props: {
+				status,
+				error
+			},
+			component: ErrorComponent
+		},
+		segments: preloaded
+
+	}
+	const query = extract_query(search);
+	render(null, [], props, { path: pathname, query, params: {} });
 }
 
 export function scroll_state() {
@@ -182,7 +219,11 @@ async function render(redirect: Redirect, branch: any[], props: any, page: Page)
 	if (root_component) {
 		root_component.$set(props);
 	} else {
-		props.session = session;
+		props.stores = {
+			page: { subscribe: stores.page.subscribe },
+			preloading: { subscribe: stores.preloading.subscribe },
+			session: stores.session
+		};
 		props.level0 = {
 			props: await root_preloaded
 		};
@@ -254,7 +295,7 @@ export async function hydrate_target(target: Target): Promise<{
 			const j = l++;
 
 			const segment = segments[i];
-			if (!session_dirty && current_branch[i] && current_branch[i].segment === segment) return current_branch[i];
+			if (!session_dirty && current_branch[i] && current_branch[i].segment === segment && current_branch[i].part === part.i) return current_branch[i];
 
 			const { default: component, preload } = await load_component(components[part.i]);
 
@@ -271,7 +312,7 @@ export async function hydrate_target(target: Target): Promise<{
 				preloaded = initial_data.preloaded[i + 1];
 			}
 
-			return (props[`level${j}`] = { component, props: preloaded, segment });
+			return (props[`level${j}`] = { component, props: preloaded, segment, part: part.i });
 		}));
 	} catch (error) {
 		props.error = error;

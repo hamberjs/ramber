@@ -1,6 +1,6 @@
 {
   "name": "ramber",
-  "version": "0.26.0-alpha.12",
+  "version": "0.26.0",
   "description": "Military-grade apps, engineered by Hamber",
   "bin": {
     "ramber": "./ramber"
@@ -17,7 +17,7 @@
   "dependencies": {
     "html-minifier": "^3.5.21",
     "http-link-header": "^1.0.2",
-    "shimport": "0.0.14",
+    "shimport": "^1.0.0",
     "sourcemap-codec": "^1.4.4",
     "string-hash": "^1.1.3"
   },
@@ -56,7 +56,7 @@
     "sucrase": "^3.9.5",
     "webpack": "^4.29.0",
     "webpack-format-messages": "^2.0.5",
-    "yootils": "0.0.14"
+    "yootils": "0.0.15"
   },
   "peerDependencies": {
     "hamber": "^3.0.0"
