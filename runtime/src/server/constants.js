@@ -1,0 +1,1 @@
+export const IGNORE = '__RAMBER__IGNORE__';

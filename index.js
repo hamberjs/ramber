@@ -1,0 +1,1 @@
+throw new Error(`As of Ramber 0.22, you should not import 'ramber' directly.`);
