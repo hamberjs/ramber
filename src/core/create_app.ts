@@ -251,11 +251,11 @@ function generate_app(manifest_data: ManifestData, path_to_routes: string) {
 
 	let l = max_depth;
 
-	let pyramid = `<hamber:component this={level${l}.component} {...level${l}.props}/>`;
+	let pyramid = `<hamber:component this="{level${l}.component}" {...level${l}.props}/>`;
 
 	while (l-- > 1) {
 		pyramid = `
-			<hamber:component this={level${l}.component} segment={segments[${l}]} {...level${l}.props}>
+			<hamber:component this="{level${l}.component}" segment="{segments[${l}]}" {...level${l}.props}>
 				{#if level${l + 1}}
 					${pyramid.replace(/\n/g, '\n\t\t\t\t\t')}
 				{/if}
@@ -281,7 +281,7 @@ function generate_app(manifest_data: ManifestData, path_to_routes: string) {
 			setContext(CONTEXT_KEY, stores);
 		</script>
 
-		<Layout segment={segments[0]} {...level0.props}>
+		<Layout segment="{segments[0]}" {...level0.props}>
 			{#if error}
 				<Error {error} {status}/>
 			{:else}
