@@ -64,4 +64,4 @@ npm link ramber
 
 ## License
 
-[LIL](LICENSE)
+[MIT](LICENSE)

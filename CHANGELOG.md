@@ -1,5 +1,10 @@
 # ramber changelog
 
+## 0.27.0
+
+* Change license from LIL to MIT
+* Fix index server route mapping
+
 ## 0.26.1
 
 * Handle skipped segments
