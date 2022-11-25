@@ -76,7 +76,7 @@
     "express"
   ],
   "author": "NKDuy",
-  "license": "LIL",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/hamberjs/ramber/issues"
   },

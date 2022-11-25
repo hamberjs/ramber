@@ -5,9 +5,8 @@ import cookie from 'cookie';
 import devalue from 'devalue';
 import fetch from 'node-fetch';
 import URL from 'url';
-import { Manifest, Page, Props, Req, Res } from './types';
+import { Manifest, Page, Req, Res } from './types';
 import { build_dir, dev, src_dir } from '@ramber/internal/manifest-server';
-import { stores } from '@ramber/internal/shared';
 import App from '@ramber/internal/App.hamber';
 
 export function get_page_handler(
