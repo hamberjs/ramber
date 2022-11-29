@@ -1,0 +1,11 @@
+{
+  "hosting": {
+    "site": "ramberjs",
+    "public": "__ramber__/export",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}
