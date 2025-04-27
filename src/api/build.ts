@@ -19,7 +19,8 @@ type Opts = {
 	static?: string;
 	legacy?: boolean;
 	bundler?: 'rollup' | 'webpack';
-	oncompile?: ({ type, result }: { type: string, result: CompileResult }) => void;
+	ext?: string;
+	oncompile?: ({ type, result }: { type: string; result: CompileResult }) => void;
 };
 
 export async function build({
@@ -30,8 +31,9 @@ export async function build({
 	static: static_files = 'static',
 	dest = '__ramber__/build',
 
-	bundler,
+	bundler = undefined,
 	legacy = false,
+	ext = undefined,
 	oncompile = noop
 }: Opts = {}) {
 	bundler = validate_bundler(bundler);
@@ -44,7 +46,7 @@ export async function build({
 	static_files = path.resolve(cwd, static_files);
 
 	if (legacy && bundler === 'webpack') {
-		throw new Error(`Legacy builds are not supported for projects using webpack`);
+		throw new Error('Legacy builds are not supported for projects using webpack');
 	}
 
 	rimraf(output);
@@ -59,16 +61,9 @@ export async function build({
 	// TODO compile this to a function? could be quicker than str.replace(...).replace(...).replace(...)
 	const template = read_template(src);
 
-	// remove this in a future version
-	if (template.indexOf('%ramber.base%') === -1) {
-		const error = new Error(`As of Ramber v0.10, your template.html file must include %ramber.base% in the <head>`);
-		error.code = `missing-ramber-base`;
-		throw error;
-	}
-
 	fs.writeFileSync(`${dest}/template.html`, minify_html(template));
 
-	const manifest_data = create_manifest_data(routes);
+	const manifest_data = create_manifest_data(routes, ext);
 
 	// create src/node_modules/@ramber/app.mjs and server.mjs
 	create_app({
@@ -82,7 +77,7 @@ export async function build({
 		dev: false
 	});
 
-	const { client, server, serviceworker } = await create_compilers(bundler, cwd, src, dest, true);
+	const { client, server, serviceworker } = await create_compilers(bundler, cwd, src, routes, dest, false);
 
 	const client_result = await client.compile();
 	oncompile({
@@ -94,21 +89,20 @@ export async function build({
 
 	if (legacy) {
 		process.env.RAMBER_LEGACY_BUILD = 'true';
-		const { client } = await create_compilers(bundler, cwd, src, dest, true);
+		const { client: legacy_client } = await create_compilers(bundler, cwd, src, routes, dest, false);
 
-		const client_result = await client.compile();
+		const legacy_client_result = await legacy_client.compile();
 
 		oncompile({
 			type: 'client (legacy)',
-			result: client_result
+			result: legacy_client_result
 		});
 
-		client_result.to_json(manifest_data, { src, routes, dest });
-		build_info.legacy_assets = client_result.assets;
+		legacy_client_result.to_json(manifest_data, { src, routes, dest });
+		build_info.legacy_assets = legacy_client_result.assets;
 		delete process.env.RAMBER_LEGACY_BUILD;
 	}
-
-	fs.writeFileSync(path.join(dest, 'build.json'), JSON.stringify(build_info));
+	fs.writeFileSync(path.join(dest, 'build.json'), JSON.stringify(build_info, null, '  '));
 
 	const server_stats = await server.compile();
 	oncompile({

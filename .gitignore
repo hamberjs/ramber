@@ -1,13 +1,9 @@
 .DS_Store
-yarn.lock
-yarn-error.log
-node_modules
-cypress/screenshots
+/node_modules
+/test/**/node_modules
 __ramber__
-ramber
-runtime.js
 dist
-!rollup.config.js
 /runtime/app.mjs
 /runtime/server.mjs
+/.vscode/settings.json
 /.idea

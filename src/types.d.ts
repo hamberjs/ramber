@@ -1,1 +1,1 @@
-declare module 'hamber/compiler';
+declare module 'ramber/compiler';

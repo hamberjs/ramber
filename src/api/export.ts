@@ -1,10 +1,11 @@
 import * as child_process from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as url from 'url';
+import * as urllib from 'url';
+import { promisify } from 'util';
 import fetch from 'node-fetch';
-import * as yootils from 'yootils';
 import * as ports from 'port-authority';
+import { exportQueue, FetchOpts, FetchRet } from './utils/export_queue';
 import clean_html from './utils/clean_html';
 import minify_html from './utils/minify_html';
 import Deferred from './utils/Deferred';
@@ -12,29 +13,65 @@ import { noop } from './utils/noop';
 import { parse as parseLinkHeader } from 'http-link-header';
 import { rimraf, copy, mkdirp } from './utils/fs_utils';
 
+const writeFile = promisify(fs.writeFile);
+
 type Opts = {
-	build_dir?: string,
-	export_dir?: string,
-	cwd?: string,
-	static?: string,
-	basepath?: string,
-	timeout?: number | false,
-	concurrent?: number,
+	build_dir?: string;
+	export_dir?: string;
+	cwd?: string;
+	static?: string;
+	basepath?: string;
+	host_header?: string;
+	timeout?: number | false;
+	concurrent?: number;
 	oninfo?: ({ message }: { message: string }) => void;
 	onfile?: ({ file, size, status }: { file: string, size: number, status: number }) => void;
+	entry?: string;
 };
 
 type Ref = {
-	uri: string,
-	rel: string,
-	as: string
+	uri: string;
+	rel: string;
+	as: string;
 };
 
+type URL = urllib.UrlWithStringQuery;
+
 function resolve(from: string, to: string) {
-	return url.parse(url.resolve(from, to));
+	return urllib.parse(urllib.resolve(from, to));
 }
 
-type URL = url.UrlWithStringQuery;
+function cleanPath(p: string) {
+	return p.replace(/^\/|\/$|\/*index(.html)*$|.html$/g, '');
+}
+
+function get_href(attrs: string) {
+	const match = /href\s*=\s*(?:"(.*?)"|'(.*?)'|([^\s>]*))/.exec(attrs);
+	return match && (match[1] || match[2] || match[3]);
+}
+
+function get_src(attrs: string) {
+	const match = /src\s*=\s*(?:"(.*?)"|'(.*?)'|([^\s>]*))/.exec(attrs);
+	return match && (match[1] || match[2] || match[3]);
+}
+
+export function get_srcset_urls(attrs: string) {
+	const results: string[] = [];
+	// Note that the srcset allows any ASCII whitespace, including newlines.
+	const match = /srcset\s*=\s*(?:"(.*?)"|'(.*?)'|([^\s>]*))/s.exec(attrs);
+	if (match) {
+		const attr_content = match[1] || match[2] || match[3];
+		// Parse the content of the srcset attribute.
+		// The regexp is modelled after the srcset specs (https://html.spec.whatwg.org/multipage/images.html#srcset-attribute)
+		// and should cover most reasonable cases.
+		const regex = /\s*([^\s,]\S+[^\s,])\s*((?:\d+w)|(?:-?\d+(?:\.\d+)?(?:[eE]-?\d+)?x))?/gm;
+		let sub_matches;
+		while (sub_matches = regex.exec(attr_content)) {
+			results.push(sub_matches[1]);
+		}
+	}
+	return results;
+}
 
 export { _export as export };
 
@@ -44,12 +81,14 @@ async function _export({
 	build_dir = '__ramber__/build',
 	export_dir = '__ramber__/export',
 	basepath = '',
+	host_header = undefined,
 	timeout = 5000,
 	concurrent = 8,
 	oninfo = noop,
-	onfile = noop
+	onfile = noop,
+	entry = '/'
 }: Opts = {}) {
-	basepath = basepath.replace(/^\//, '')
+	basepath = basepath.replace(/^\//, '');
 
 	cwd = path.resolve(cwd);
 	static_files = path.resolve(cwd, static_files);
@@ -61,8 +100,12 @@ async function _export({
 
 	copy(static_files, export_dir);
 	copy(path.join(build_dir, 'client'), path.join(export_dir, 'client'));
-	copy(path.join(build_dir, 'service-worker.js'), path.join(export_dir, 'service-worker.js'));
-	copy(path.join(build_dir, 'service-worker.js.map'), path.join(export_dir, 'service-worker.js.map'));
+
+	const has_serviceworker = fs.existsSync(path.join(build_dir, 'service-worker.js'));
+	if (has_serviceworker) {
+		copy(path.join(build_dir, 'service-worker.js'), path.join(export_dir, 'service-worker.js'));
+		copy(path.join(build_dir, 'service-worker.js.map'), path.join(export_dir, 'service-worker.js.map'));
+	}
 
 	const defaultPort = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 	const port = await ports.find(defaultPort);
@@ -74,8 +117,11 @@ async function _export({
 	const root = resolve(origin, basepath);
 	if (!root.href.endsWith('/')) root.href += '/';
 
-	oninfo({
-		message: `Crawling ${root.href}`
+	const entryPoints = entry.split(' ').map(entryPoint => {
+		const resolved = resolve(origin, `${basepath}/${cleanPath(entryPoint)}`);
+		if (!resolved.href.endsWith('/')) resolved.href += '/';
+
+		return resolved;
 	});
 
 	const proc = child_process.fork(path.resolve(`${build_dir}/server/server.js`), [], {
@@ -89,9 +135,8 @@ async function _export({
 
 	const seen = new Set();
 	const saved = new Set();
-	const q = yootils.queue(concurrent);
 
-	function save(url: string, status: number, type: string, body: string) {
+	function save(url: string, status: number, type: string, body: string | ArrayBuffer) {
 		const { pathname } = resolve(origin, url);
 		let file = decodeURIComponent(pathname.slice(1));
 
@@ -101,124 +146,192 @@ async function _export({
 		const is_html = type === 'text/html';
 
 		if (is_html) {
-			if (pathname !== '/service-worker-index.html') {
+			if (!file.endsWith('.html')) {
 				file = file === '' ? 'index.html' : `${file}/index.html`;
 			}
-			body = minify_html(body);
+
+			if (typeof body === 'string') {
+				body = minify_html(body);
+			} else {
+				oninfo({ message: `Content of ${url} has content-type text/html but the content was received as a binary buffer. The HTML will not be minified.` });
+			}
 		}
+
+		const buffer = Buffer.from(body);
 
 		onfile({
 			file,
-			size: body.length,
+			size: buffer.byteLength,
 			status
 		});
 
 		const export_file = path.join(export_dir, file);
+		if (fs.existsSync(export_file)) return;
 		mkdirp(path.dirname(export_file));
-		fs.writeFileSync(export_file, body);
+
+		return writeFile(export_file, buffer);
 	}
 
-	proc.on('message', message => {
-		if (!message.__ramber__ || message.event !== 'file') return;
-		save(message.url, message.status, message.type, message.body);
-	});
-
-	async function handle(url: URL) {
+	function handle(url: URL, fetchOpts: FetchOpts, addCallback: (url: URL) => void) {
 		let pathname = url.pathname;
 		if (pathname !== '/service-worker-index.html') {
-			pathname = pathname.replace(root.pathname, '') || '/'
+			pathname = pathname.replace(fetchOpts.root.pathname, '') || '/';
 		}
 
 		if (seen.has(pathname)) return;
-		seen.add(pathname);
 
+		seen.add(pathname);
+		addCallback(url);
+	}
+
+	async function handleFetch(url: URL, opts: FetchOpts) {
+		const href = url.href;
 		const timeout_deferred = new Deferred();
 		const the_timeout = setTimeout(() => {
-			timeout_deferred.reject(new Error(`Timed out waiting for ${url.href}`));
-		}, timeout);
+			timeout_deferred.reject(new Error(`Timed out waiting for ${href}`));
+		}, opts.timeout);
 
 		const r = await Promise.race([
-			q.add(() => fetch(url.href, {
+			fetch(href, {
+				headers: { host: opts.host_header || opts.host },
 				redirect: 'manual'
-			})),
+			}),
 			timeout_deferred.promise
 		]);
 
 		clearTimeout(the_timeout); // prevent it hanging at the end
 
-		let type = r.headers.get('Content-Type');
+		return {
+			response: r,
+			url
+		};
+	}
 
-		let body = await r.text();
+	async function handleResponse(fetched: Promise<FetchRet>, fetchOpts: FetchOpts) {
+		const { response, url } = await fetched;
+		let pathname = url.pathname;
 
-		const range = ~~(r.status / 100);
+		if (pathname !== '/service-worker-index.html') {
+			pathname = pathname.replace(fetchOpts.root.pathname, '') || '/';
+		}
 
-		if (range === 2) {
-			if (type === 'text/html') {
-				// parse link rel=preload headers and embed them in the HTML
-				let link = parseLinkHeader(r.headers.get('Link') || '');
-				link.refs.forEach((ref: Ref) => {
-					if (ref.rel === 'preload') {
-						body = body.replace('</head>',
-							`<link rel="preload" as=${JSON.stringify(ref.as)} href=${JSON.stringify(ref.uri)}></head>`)
+		let type = response.headers.get('Content-Type');
+
+		let body = type.startsWith('text/')
+			? await response.text()
+			: await response.arrayBuffer();
+
+		const range = ~~(response.status / 100);
+
+		if (range === 2 && type === 'text/html') {
+			// parse link rel=preload headers and embed them in the HTML
+			const link = parseLinkHeader(response.headers.get('Link') || '');
+			link.refs.forEach((ref: Ref) => {
+				if (ref.rel === 'preload' || ref.rel === 'modulepreload') {
+					body = (body as string).replace('</head>',
+						`<link rel=${JSON.stringify(ref.rel)} as=${JSON.stringify(ref.as)} href=${JSON.stringify(ref.uri)} ${ref.as === 'script' ? 'crossorigin="use-credentials"' : ''}></head>`);
+				}
+			});
+
+			if (pathname !== '/service-worker-index.html') {
+				const cleaned = clean_html(body as string);
+
+				const base_match = /<base ([\s\S]+?)>/m.exec(cleaned);
+				const base_href = base_match ? get_href(base_match[1]) : path.dirname(url.pathname);
+				const base = resolve(url.href, base_href);
+
+				let match;
+				const pattern = /<(a|img|link|source)\s+([\s\S]+?)>/gm;
+
+				while (match = pattern.exec(cleaned)) {
+					let hrefs: string[] = [];
+					const element = match[1];
+					const attrs = match[2];
+
+					if (element === 'a' || element === 'link') {
+						hrefs.push(get_href(attrs));
+					} else {
+						if (element === 'img') {
+							hrefs.push(get_src(attrs));
+						}
+						hrefs.push(...get_srcset_urls(attrs));
 					}
-				});
 
-				if (pathname !== '/service-worker-index.html') {
-					const cleaned = clean_html(body);
+					hrefs = hrefs.filter(Boolean);
 
-					const base_match = /<base ([\s\S]+?)>/m.exec(cleaned);
-					const base_href = base_match && get_href(base_match[1]);
-					const base = resolve(url.href, base_href);
-
-					let match;
-					let pattern = /<a ([\s\S]+?)>/gm;
-
-					let promise;
-
-					while (match = pattern.exec(cleaned)) {
-						const attrs = match[1];
-						const href = get_href(attrs);
-
-						if (href) {
-							const url = resolve(base.href, href);
-
-							if (url.protocol === protocol && url.host === host) {
-								promise = handle(url);
-							}
+					for (const href of hrefs) {
+						const dest = resolve(base.href, href);
+						if (dest.protocol === fetchOpts.protocol && dest.host === fetchOpts.host) {
+							handle(dest, fetchOpts, queue.add);
 						}
 					}
-
-					await promise;
 				}
 			}
 		}
 
 		if (range === 3) {
-			const location = r.headers.get('Location');
+			const location = response.headers.get('Location');
 
 			type = 'text/html';
 			body = `<script>window.location.href = "${location.replace(origin, '')}"</script>`;
 
-			await handle(resolve(root.href, location));
+			handle(resolve(fetchOpts.root.href, location), fetchOpts, queue.add);
 		}
 
-		save(pathname, r.status, type, body);
+		return save(pathname, response.status, type, body);
 	}
 
-	try {
-		await ports.wait(port);
-		await handle(root);
-		await handle(resolve(root.href, 'service-worker-index.html'));
-		await q.close();
+	const queueFetchOpts = {
+		timeout: timeout === false ? 0 : timeout,
+		host,
+		host_header,
+		protocol,
+		root
+	};
 
-		proc.kill()
-	} catch (err) {
-		proc.kill();
-		throw err;
-	}
-}
+	const queue = exportQueue({
+		concurrent,
+		seen,
+		saved,
+		fetchOpts: queueFetchOpts,
+		handleFetch,
+		handleResponse,
+		callbacks: {
+			onDone: () => {}
+		}
+	});
 
-function get_href(attrs: string) {
-	const match = /href\s*=\s*(?:"(.*?)"|'(.*?)'|([^\s>]*))/.exec(attrs);
-	return match && (match[1] || match[2] || match[3]);
+	proc.on('message', message => {
+		if (!message.__ramber__ || message.event !== 'file') return;
+		queue.addSave(save(message.url, message.status, message.type, message.body));
+	});
+
+	return new Promise<void>((res, rej) => {
+		queue.setCallback('onDone', () => {
+			proc.kill();
+			res();
+		});
+
+		ports.wait(port).then(() => {
+			try {
+				for (const entryPoint of entryPoints) {
+					oninfo({
+						message: `Crawling ${entryPoint.href}`
+					});
+					handle(entryPoint, queueFetchOpts, queue.add);
+				}
+
+				if (has_serviceworker) {
+					const workerUrl = resolve(root.href, 'service-worker-index.html');
+					handle(workerUrl, queueFetchOpts, queue.add);
+				}
+			} catch (err) {
+				proc.kill();
+				rej(err);
+			}
+		}).catch(err => {
+			proc.kill();
+			rej(err);
+		});
+	});
 }

@@ -1,9 +1,11 @@
-# Ramber
+# ramber
+
+[The next small thing in web development, powered by Hamber.](https://ramberjs.web.app)
 
 
 ## What is Ramber?
 
-Ramber is a framework for building high-performance universal web apps.
+Ramber is a framework for building high-performance universal web apps. [Read the guide](https://ramberjs.web.app/docs) or the [introductory blog post](https://hamberjs.web.app/blog/ramber-towards-the-ideal-web-app-framework) to learn more.
 
 
 ## Get started
@@ -38,7 +40,7 @@ Pull requests are encouraged and always welcome. [Pick an issue](https://github.
 To install and work on Ramber locally:
 
 ```bash
-git clone git@github.com:hamberjs/ramber.git
+git clone https://github.com/hamberjs/ramber.git
 cd ramber
 npm install
 npm run dev

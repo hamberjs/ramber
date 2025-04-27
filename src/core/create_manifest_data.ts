@@ -1,39 +1,25 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import hamber from 'hamber/compiler';
 import { Page, PageComponent, ServerRoute, ManifestData } from '../interfaces';
 import { posixify, reserved_words } from '../utils';
 
-const component_extensions = ['.hamber', '.html']; // TODO make this configurable (to include e.g. .hamber.md?)
+export default function create_manifest_data(cwd: string, extensions = '.hamber .html'): ManifestData {
 
-export default function create_manifest_data(cwd: string): ManifestData {
+	const component_extensions = extensions.split(' ');
+
 	// TODO remove in a future version
 	if (!fs.existsSync(cwd)) {
-		throw new Error(`As of Ramber 0.21, the routes/ directory should become src/routes/`);
+		throw new Error('As of Ramber 0.21, the routes/ directory should become src/routes/');
 	}
 
-	function has_preload(file: string) {
-		const source = fs.readFileSync(path.join(cwd, file), 'utf-8');
-
-		if (/preload/.test(source)) {
-			try {
-				const { vars } = hamber.compile(source.replace(/<style\b[^>]*>[^]*?<\/style>/g, ''), { generate: false });
-				return vars.some((variable: any) => variable.module && variable.export_name === 'preload');
-			} catch (err) {}
-		}
-
-		return false;
-	}
-
-	function find_layout(file_name: string, component_name: string, dir: string = '') {
+	function find_layout(file_name: string, component_name: string, dir = '') {
 		const ext = component_extensions.find((ext) => fs.existsSync(path.join(cwd, dir, `${file_name}${ext}`)));
-		const file = posixify(path.join(dir, `${file_name}${ext}`))
+		const file = posixify(path.join(dir, `${file_name}${ext}`));
 
 		return ext
 			? {
 				name: component_name,
-				file: file,
-				has_preload: has_preload(file)
+				file
 			}
 			: null;
 	}
@@ -46,16 +32,14 @@ export default function create_manifest_data(cwd: string): ManifestData {
 		default: true,
 		type: 'layout',
 		name: '_default_layout',
-		file: null,
-		has_preload: false
+		file: null
 	};
 
 	const default_error: PageComponent = {
 		default: true,
 		type: 'error',
 		name: '_default_error',
-		file: null,
-		has_preload: false
+		file: null
 	};
 
 	function walk(
@@ -63,8 +47,8 @@ export default function create_manifest_data(cwd: string): ManifestData {
 		parent_segments: Part[][],
 		parent_params: string[],
 		stack: Array<{
-			component: PageComponent,
-			params: string[]
+			component: PageComponent;
+			params: string[];
 		}>
 	) {
 		const items = fs.readdirSync(dir)
@@ -73,27 +57,28 @@ export default function create_manifest_data(cwd: string): ManifestData {
 				const file = path.relative(cwd, resolved);
 				const is_dir = fs.statSync(resolved).isDirectory();
 
-				const ext = path.extname(basename);
+				const file_ext = path.extname(basename);
 
 				if (basename[0] === '_') return null;
 				if (basename[0] === '.' && basename !== '.well-known') return null;
-				if (!is_dir && !/^\.[a-z]+$/i.test(ext)) return null; // filter out tmp files etc
+				if (!is_dir && !/^\.[a-z]+$/i.test(file_ext)) return null; // filter out tmp files etc
 
-				const segment = is_dir
-					? basename
-					: basename.slice(0, -ext.length);
+				const component_extension = component_extensions.find((ext) => basename.endsWith(ext));
+				const ext = component_extension || file_ext;
+				const is_page = component_extension != null;
+				const segment = is_dir ? basename : basename.slice(0, -ext.length);
+
+
+				if (/\]\[/.test(segment)) {
+					throw new Error(`Invalid route ${file} — parameters must be separated`);
+				}
 
 				const parts = get_parts(segment);
 				const is_index = is_dir ? false : basename.startsWith('index.');
-				const is_page = component_extensions.indexOf(ext) !== -1;
 				const route_suffix = basename.slice(basename.indexOf('.'), -ext.length);
 
 				parts.forEach(part => {
-					if (/\]\[/.test(part.content)) {
-						throw new Error(`Invalid route ${file} — parameters must be separated`);
-					}
-
-					if (part.qualifier && /[\(\)\?\:]/.test(part.qualifier.slice(1, -1))) {
+					if (part.qualifier && /[()?:]/.test(part.qualifier.slice(1, -1))) {
 						throw new Error(`Invalid route ${file} — cannot use (, ), ? or : in route qualifiers`);
 					}
 				});
@@ -155,33 +140,28 @@ export default function create_manifest_data(cwd: string): ManifestData {
 						? stack.concat({ component, params })
 						: stack.concat(null)
 				);
-			}
-
-			else if (item.is_page) {
+			} else if (item.is_page) {
 				const component = {
 					name: get_slug(item.file),
-					file: item.file,
-					has_preload: has_preload(item.file)
+					file: item.file
 				};
 
 				components.push(component);
 
 				const parts = (item.is_index && stack[stack.length - 1] === null)
 					? stack.slice(0, -1).concat({ component, params })
-					: stack.concat({ component, params })
+					: stack.concat({ component, params });
 
 				pages.push({
 					pattern: get_pattern(segments, true),
 					parts
 				});
-			}
-
-			else {
+			} else {
 				server_routes.push({
 					name: `route_${get_slug(item.file)}`,
 					pattern: get_pattern(segments, !item.route_suffix),
 					file: item.file,
-					params: params
+					params
 				});
 			}
 		});
@@ -236,12 +216,12 @@ type Part = {
 
 function is_spread(path: string) {
 	const spread_pattern = /\[\.{3}/g;
-	return spread_pattern.test(path)
+	return spread_pattern.test(path);
 }
 
 function comparator(
-	a: { basename: string, parts: Part[], file: string, is_index: boolean },
-	b: { basename: string, parts: Part[], file: string, is_index: boolean }
+	a: { basename: string; parts: Part[]; file: string; is_index: boolean; },
+	b: { basename: string; parts: Part[]; file: string; is_index: boolean; }
 ) {
 	if (a.is_index !== b.is_index) {
 		if (a.is_index) return is_spread(a.file) ? 1 : -1;
@@ -260,7 +240,7 @@ function comparator(
 
 		// if spread && index, order later
 		if (a_sub_part.spread && b_sub_part.spread) {
-			return a.is_index ? 1 : -1
+			return a.is_index ? 1 : -1;
 		}
 
 		// If one is ...spread order it later
@@ -297,14 +277,14 @@ function comparator(
 }
 
 function get_parts(part: string): Part[] {
-	return part.split(/\[(.+)\]/)
+	return part.split(/\[(.+?\(.+?\)|.+?)\]/)
 		.map((str, i) => {
 			if (!str) return null;
 			const dynamic = i % 2 === 1;
 
 			const [, content, qualifier] = dynamic
 				? /([^(]+)(\(.+\))?$/.exec(str)
-				: [, str, null];
+				: [null, str, null];
 
 			return {
 				content,
@@ -318,12 +298,12 @@ function get_parts(part: string): Part[] {
 
 function get_slug(file: string) {
 	let name = file
-		.replace(/[\\\/]index/, '')
-		.replace(/[\/\\]/g, '_')
+		.replace(/[\\/]index/, '')
+		.replace(/[/\\]/g, '_')
 		.replace(/\.\w+$/, '')
 		.replace(/\[([^(]+)(?:\([^(]+\))?\]/, '$$$1')
 		.replace(/[^a-zA-Z0-9_$]/g, c => {
-			return c === '.' ? '_' : `$${c.charCodeAt(0)}`
+			return c === '.' ? '_' : `$${c.charCodeAt(0)}`;
 		});
 
 	if (reserved_words.has(name)) name += '_';
@@ -334,12 +314,13 @@ function get_pattern(segments: Part[][], add_trailing_slash: boolean) {
 	const path = segments.map(segment => {
 		return segment.map(part => {
 			return part.dynamic
-				? part.qualifier || part.spread ? '(.+)' : '([^\\/]+?)'
+				? part.qualifier || (part.spread ? '(.+)' : '([^/]+?)')
 				: encodeURI(part.content.normalize())
 					.replace(/\?/g, '%3F')
 					.replace(/#/g, '%23')
 					.replace(/%5B/g, '[')
-					.replace(/%5D/g, ']');
+					.replace(/%5D/g, ']')
+					.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		}).join('');
 	}).join('\\/');
 
