@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang='en' class="theme-default typo-default">
+<head>
+	<meta charset='utf-8'>
+	<meta name='viewport' content='width=device-width,initial-scale=1.0'>
+	<meta name='theme-color' content='#159794'>
+
+	%ramber.base%
+
+	<link href=global.css rel=stylesheet>
+	<link href=prism.css rel=stylesheet>
+	<link rel='manifest' href='manifest.json'>
+	<link rel='icon' type='image/png' href='favicon.png'>
+
+	<meta name='twitter:card' content='summary_large_image'>
+	<meta name='twitter:site' content='@hamberjs'>
+	<meta name='twitter:creator' content='@hamberjs'>
+	<meta name='twitter:image' content='https://ramberjs.web.app/images/twitter-card.png'>
+	<meta name='og:image' content='https://hamberjs.web.app/images/twitter-card.png'>
+
+	<!-- Ramber generates a <style> tag containing critical CSS
+	     for the current page. CSS for the rest of the app is
+	     lazily loaded when it precaches secondary pages -->
+	%ramber.styles%
+
+	<style>
+		.hljs, .hljs-subst { color: #333; }
+		.hljs-comment { color: #999; }
+		.hljs-tag { color: #170; }
+		.hljs-keyword { color: #708; }
+		.hljs-attr { color: #333; }
+		.hljs-number { color: #164; }
+		.hljs-type, .hljs-string, .hljs-selector-id, .hljs-selector-class, .hljs-quote, .hljs-template-tag, .hljs-deletion { color: rgb(16,94,16); }
+		.hljs-title, .hljs-section { color: rgb(16,94,16); }
+		.hljs-literal { color: #170; }
+		.hljs-meta { color: #555; }
+		.hljs-meta-string { color: #555; }
+	</style>
+
+	<!-- This contains the contents of the <hamber:head> component, if
+	     the current page has one -->
+	%ramber.head%
+</head>
+<body>
+	<!-- The application will be rendered inside this element,
+	     because `app/client.js` references it -->
+	<div id='ramber'>%ramber.html%</div>
+
+	<!-- Ramber creates a <script> tag containing `app/client.js`
+			 and anything else it needs to hydrate the app and
+			 initialise the router -->
+	%ramber.scripts%
+</body>
+</html>
