@@ -1,6 +1,6 @@
 {
   "name": "ramber",
-  "version": "0.29.3",
+  "version": "0.29.4",
   "description": "The next small thing in web development, powered by Hamber",
   "bin": {
     "ramber": "./ramber"
